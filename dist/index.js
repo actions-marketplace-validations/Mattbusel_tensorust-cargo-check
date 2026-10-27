@@ -27418,6 +27418,64 @@ module.exports = parseParams
 /******/ }
 /******/ 
 /************************************************************************/
+/******/ /* webpack/runtime/create fake namespace object */
+/******/ (() => {
+/******/ 	var getProto = Object.getPrototypeOf ? (obj) => (Object.getPrototypeOf(obj)) : (obj) => (obj.__proto__);
+/******/ 	var leafPrototypes;
+/******/ 	// create a fake namespace object
+/******/ 	// mode & 1: value is a module id, require it
+/******/ 	// mode & 2: merge all properties of value into the ns
+/******/ 	// mode & 4: return value when already ns object
+/******/ 	// mode & 16: return value when it's Promise-like
+/******/ 	// mode & 8|1: behave like require
+/******/ 	__nccwpck_require__.t = function(value, mode) {
+/******/ 		if(mode & 1) value = this(value);
+/******/ 		if(mode & 8) return value;
+/******/ 		if(typeof value === 'object' && value) {
+/******/ 			if((mode & 4) && value.__esModule) return value;
+/******/ 			if((mode & 16) && typeof value.then === 'function') return value;
+/******/ 		}
+/******/ 		var ns = Object.create(null);
+/******/ 		__nccwpck_require__.r(ns);
+/******/ 		var def = {};
+/******/ 		leafPrototypes = leafPrototypes || [null, getProto({}), getProto([]), getProto(getProto)];
+/******/ 		for(var current = mode & 2 && value; typeof current == 'object' && !~leafPrototypes.indexOf(current); current = getProto(current)) {
+/******/ 			Object.getOwnPropertyNames(current).forEach((key) => (def[key] = () => (value[key])));
+/******/ 		}
+/******/ 		def['default'] = () => (value);
+/******/ 		__nccwpck_require__.d(ns, def);
+/******/ 		return ns;
+/******/ 	};
+/******/ })();
+/******/ 
+/******/ /* webpack/runtime/define property getters */
+/******/ (() => {
+/******/ 	// define getter functions for harmony exports
+/******/ 	__nccwpck_require__.d = (exports, definition) => {
+/******/ 		for(var key in definition) {
+/******/ 			if(__nccwpck_require__.o(definition, key) && !__nccwpck_require__.o(exports, key)) {
+/******/ 				Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+/******/ 			}
+/******/ 		}
+/******/ 	};
+/******/ })();
+/******/ 
+/******/ /* webpack/runtime/hasOwnProperty shorthand */
+/******/ (() => {
+/******/ 	__nccwpck_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
+/******/ })();
+/******/ 
+/******/ /* webpack/runtime/make namespace object */
+/******/ (() => {
+/******/ 	// define __esModule on exports
+/******/ 	__nccwpck_require__.r = (exports) => {
+/******/ 		if(typeof Symbol !== 'undefined' && Symbol.toStringTag) {
+/******/ 			Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
+/******/ 		}
+/******/ 		Object.defineProperty(exports, '__esModule', { value: true });
+/******/ 	};
+/******/ })();
+/******/ 
 /******/ /* webpack/runtime/compat */
 /******/ 
 /******/ if (typeof __nccwpck_require__ !== 'undefined') __nccwpck_require__.ab = new URL('.', import.meta.url).pathname.slice(import.meta.url.match(/^file:\/\/\/\w:/) ? 1 : 0, -1) + "/";
@@ -27427,6 +27485,7 @@ var __webpack_exports__ = {};
 
 // EXTERNAL MODULE: ./node_modules/@actions/core/lib/core.js
 var core = __nccwpck_require__(7484);
+var core_namespaceObject = /*#__PURE__*/__nccwpck_require__.t(core, 2);
 ;// CONCATENATED MODULE: external "node:fs"
 const external_node_fs_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:fs");
 ;// CONCATENATED MODULE: external "node:path"
@@ -27918,8 +27977,125 @@ function renderReport(r, { source, checkedAt = new Date().toISOString().slice(0,
 
 const LOCKED_MESSAGE = `${MARKER}\nTensorust Cargo Check is free on public repos. This repo is private, so it needs a license key ($9 a month per repo): get one at https://shop.tensorust.com/dev/cargo-check and add it as the \`license-key\` input.\n`;
 
+;// CONCATENATED MODULE: external "node:child_process"
+const external_node_child_process_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:child_process");
+;// CONCATENATED MODULE: ./src/fix.js
+// Fix mode: apply the smallest Cargo.lock upgrades that clear security advisories and yanked versions,
+// run the project's tests, and open (or refresh) one pull request a human approves.
+
+
+
+
+
+
+const FIX_MARKER = '<!-- tensorust-cargo-check:fix -->';
+const BRANCH = 'tensorust/dependency-fixes';
+
+// Cargo's caret rule: an upgrade stays inside the requirement when the left-most non-zero part is unchanged.
+function compatible(from, to) {
+  const a = parseVersion(from), b = parseVersion(to);
+  if (!a || !b) return false;
+  if (a.M !== b.M) return false;
+  if (a.M > 0) return true;
+  if ((a.m || 0) !== (b.m || 0)) return false;
+  if ((a.m || 0) > 0) return true;
+  return (a.p || 0) === (b.p || 0);
+}
+
+// What to change: one plan item per locked package, from the check result.
+function planFixes(r) {
+  const plan = [], manual = [];
+  const seen = new Set();
+  for (const { row, a } of r.security) {
+    const key = row.name + '@' + row.version;
+    if (seen.has(key)) continue;
+    if (a.upgrade && compatible(row.version, a.upgrade)) { seen.add(key); plan.push({ name: row.name, from: row.version, to: a.upgrade, precise: true, why: a.rs + (a.summary ? ': ' + a.summary : '') }); }
+    else manual.push({ name: row.name, from: row.version, why: a.rs, need: a.upgrade ? `${a.upgrade} (a Cargo.toml change)` : 'no fixed version: replace or remove' });
+  }
+  for (const row of r.yanked) {
+    const key = row.name + '@' + row.version;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    plan.push({ name: row.name, from: row.version, to: null, precise: false, why: 'yanked from crates.io' });
+  }
+  return { plan, manual };
+}
+
+function sh(cmd, args, cwd, opts = {}) {
+  const res = (0,external_node_child_process_namespaceObject.spawnSync)(cmd, args, { cwd, encoding: 'utf8', shell: !!opts.shell, maxBuffer: 64 * 1024 * 1024, timeout: opts.timeout || 0 });
+  return { ok: res.status === 0, out: ((res.stdout || '') + (res.stderr || '')).trim(), status: res.status };
+}
+
+const tail = (s, n = 60) => s.split('\n').slice(-n).join('\n');
+
+async function runFix({ r, call, repo, ws, lockRel, testCommand, base, core }) {
+  const { plan, manual } = planFixes(r);
+  const dir = external_node_path_namespaceObject.dirname(external_node_path_namespaceObject.join(ws, lockRel));
+  if (!plan.length) {
+    core.info(`Fix mode: nothing Cargo can upgrade on its own${manual.length ? ` (${manual.length} need a Cargo.toml change, listed in the summary)` : ''}.`);
+    return { applied: [], manual, pr: null };
+  }
+
+  const applied = [], failed = [];
+  for (const f of plan) {
+    const args = ['update', '-p', `${f.name}@${f.from}`];
+    if (f.precise) args.push('--precise', f.to);
+    const u = sh('cargo', args, dir);
+    if (!u.ok) { failed.push({ ...f, error: tail(u.out, 5) }); continue; }
+    applied.push(f);
+  }
+  if (!applied.length) { core.warning('Fix mode: every cargo update failed; see the summary.'); return { applied, failed, manual, pr: null }; }
+
+  // Read the new versions back from the lock file.
+  const after = parseLock((0,external_node_fs_namespaceObject.readFileSync)(external_node_path_namespaceObject.join(ws, lockRel), 'utf8'));
+  for (const f of applied) {
+    const now = after.filter(p => p.name === f.name).map(p => p.version);
+    f.to = now.includes(f.from) ? f.to : (f.to && now.includes(f.to) ? f.to : now[0] || f.to);
+  }
+
+  core.info(`Fix mode: running "${testCommand}"`);
+  const t = sh(testCommand, [], dir, { shell: true, timeout: 50 * 60_000 });
+  const passed = t.ok;
+
+  // Commit on a fixed branch, force-pushed so one PR stays current.
+  const g = (...a) => sh('git', a, ws);
+  g('config', 'user.name', 'tensorust-cargo-check[bot]');
+  g('config', 'user.email', 'support@tensorust.com');
+  g('checkout', '-B', BRANCH);
+  g('add', lockRel);
+  const msg = `Upgrade ${applied.length} crate${applied.length > 1 ? 's' : ''} to clear advisories and yanked versions\n\n` + applied.map(f => `- ${f.name} ${f.from} -> ${f.to}: ${f.why}`).join('\n');
+  const c = g('commit', '-m', msg);
+  if (!c.ok) { core.warning('Fix mode: nothing to commit (the lock file did not change).'); return { applied: [], failed, manual, pr: null }; }
+  const p = g('push', '--force', 'origin', `HEAD:refs/heads/${BRANCH}`);
+  if (!p.ok) { core.warning(`Fix mode: could not push ${BRANCH} (give the workflow permissions: contents: write). ${tail(p.out, 3)}`); return { applied, failed, manual, pr: null, passed }; }
+
+  const body = renderFixBody({ applied, failed, manual, passed, testCommand, testOut: tail(t.out), lockRel });
+  const [owner] = repo.split('/');
+  const open = await call('GET', `/repos/${repo}/pulls?state=open&head=${encodeURIComponent(owner + ':' + BRANCH)}`);
+  let pr;
+  if (open && open.length) pr = await call('PATCH', `/repos/${repo}/pulls/${open[0].number}`, { body: { body, title: prTitle(applied, passed) } });
+  else pr = await call('POST', `/repos/${repo}/pulls`, { body: { title: prTitle(applied, passed), head: BRANCH, base, body, draft: !passed } });
+  core.info(`Fix mode: ${pr.html_url}`);
+  return { applied, failed, manual, pr: pr.html_url, passed };
+}
+
+const prTitle = (applied, passed) => `${passed ? '' : '[tests failing] '}Fix ${applied.length} vulnerable or yanked crate${applied.length > 1 ? 's' : ''}`;
+
+function renderFixBody({ applied, failed = [], manual = [], passed, testCommand, testOut, lockRel }) {
+  let s = `${FIX_MARKER}\n### Tensorust Cargo Check: dependency fixes\n\n`;
+  s += passed ? `Tests pass with these upgrades (\`${testCommand}\`). Review and merge.\n\n` : `**Tests fail with these upgrades** (\`${testCommand}\`), so this is a draft. The output is below.\n\n`;
+  s += `| Crate | From | To | Why |\n|---|---|---|---|\n` + applied.map(f => `| ${f.name} | ${f.from} | ${f.to || 'latest compatible'} | ${String(f.why).replace(/[|\n]/g, ' ')} |`).join('\n') + '\n\n';
+  s += `Only \`${lockRel}\` changes: every upgrade stays inside your Cargo.toml requirements.\n\n`;
+  if (manual.length) s += `**Needs a person** (a Cargo.toml change):\n` + manual.map(m => `- ${m.name} ${m.from}: ${m.why}, fixed in ${m.need}`).join('\n') + '\n\n';
+  if (failed.length) s += `**Cargo could not apply:**\n` + failed.map(f => `- ${f.name} ${f.from}: ${f.error.replace(/\n/g, ' ')}`).join('\n') + '\n\n';
+  if (!passed && testOut) s += `<details><summary>Test output (last lines)</summary>\n\n\`\`\`\n${testOut.slice(-6000)}\n\`\`\`\n</details>\n\n`;
+  s += `<sub>This branch is rebuilt on every scheduled run. [Tensorust Cargo Check](https://tensorust.com/tools/cargo-check-action/)</sub>\n`;
+  return s;
+}
+
 ;// CONCATENATED MODULE: ./src/main.js
 // GitHub glue: find the Cargo files a pull request touches, run the checks, post or update one comment.
+
 
 
 
@@ -27999,6 +28175,8 @@ async function run() {
   const lockInput = core.getInput('lockfile').trim();
   const maxApiCalls = Math.max(0, parseInt(core.getInput('max-api-calls') || '60', 10) || 0);
   const wantComment = (core.getInput('comment') || 'true').toLowerCase() !== 'false';
+  const wantFix = (core.getInput('fix') || 'false').toLowerCase() === 'true';
+  const testCommand = core.getInput('test-command') || 'cargo test';
   const repo = process.env.GITHUB_REPOSITORY;
   const event = process.env.GITHUB_EVENT_PATH && (0,external_node_fs_namespaceObject.existsSync)(process.env.GITHUB_EVENT_PATH) ? JSON.parse((0,external_node_fs_namespaceObject.readFileSync)(process.env.GITHUB_EVENT_PATH, 'utf8')) : {};
   const pr = event.pull_request;
@@ -28021,7 +28199,20 @@ async function run() {
     const lockPath = external_node_path_namespaceObject.join(ws, lockInput || 'Cargo.lock');
     if (!(0,external_node_fs_namespaceObject.existsSync)(lockPath)) { core.info(`No pull request and no ${lockInput || 'Cargo.lock'} in the workspace (run actions/checkout first). Nothing to check.`); return; }
     const r = await runCheck({ packages: parseLock((0,external_node_fs_namespaceObject.readFileSync)(lockPath, 'utf8')), fetch, maxApiCalls });
-    const md = renderReport(r, { source: '`' + (lockInput || 'Cargo.lock') + '`', failOn });
+    let md = renderReport(r, { source: '`' + (lockInput || 'Cargo.lock') + '`', failOn });
+    if (wantFix) {
+      const base = (event.repository && event.repository.default_branch) || process.env.GITHUB_REF_NAME || 'main';
+      try {
+        const f = await runFix({ r, call, repo, ws, lockRel: lockInput || 'Cargo.lock', testCommand, base, core: core_namespaceObject });
+        core.setOutput('fix-pr', f.pr || '');
+        if (f.pr) md += `
+**Fix pull request:** ${f.pr} (${f.passed ? 'tests pass' : 'tests fail, opened as a draft'})
+`;
+        else if (f.manual && f.manual.length) md += `
+**Fix mode:** nothing Cargo can upgrade inside your requirements; ${f.manual.length} need a Cargo.toml change.
+`;
+      } catch (e) { core.warning(`Fix mode failed: ${e.message}`); }
+    }
     await core.summary.addRaw(md).write();
     return finish(r, failOn);
   }

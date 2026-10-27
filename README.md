@@ -47,6 +47,31 @@ That is all. Open a PR that bumps a dependency and the comment appears.
 
 `fail-on` takes any of `advisories`, `yanked`, `unmaintained`, `copyleft`, comma separated. By default the check never fails; it only reports.
 
+## Fix it for me: weekly upgrade pull requests
+
+Turn on `fix: true` on a schedule and the action applies the smallest upgrade that clears each security advisory and yanked version, runs your tests, and opens one pull request for you to approve. It only touches `Cargo.lock` and only moves inside your Cargo.toml requirements; anything that needs a breaking bump is listed for a person. If your tests fail, the pull request opens as a draft with the output.
+
+```yaml
+name: Dependency fixes
+on:
+  schedule: [{ cron: '17 6 * * 1' }]
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Mattbusel/tensorust-cargo-check@v1
+        with:
+          fix: true
+          test-command: cargo test --all-features
+```
+
+Free on public repos; private repos use the same $9 a month license key.
+
 ## Private repositories
 
 Free on every public repo. A private repo needs a license key: **$9 a month per repo**, from [shop.tensorust.com/dev/cargo-check](https://shop.tensorust.com/dev/cargo-check). Store it as a repository secret and pass it in:
@@ -103,6 +128,8 @@ Use the result in a later step:
 | `lockfile` | auto | Every `Cargo.lock` the PR changes, plus the nearest one above each changed `Cargo.toml`. |
 | `max-api-calls` | `60` | Licenses for the 1,000 most-used crates come from a table we publish; others cost one crates.io API call each, one a second as crates.io asks. |
 | `comment` | `true` | `false` writes only the job summary. |
+| `fix` | `false` | On scheduled or manual runs: upgrade vulnerable or yanked crates inside your requirements, test, open one pull request. |
+| `test-command` | `cargo test` | Command fix mode runs to test the upgrades. |
 
 ## Outputs
 

@@ -126,3 +126,31 @@ test('private repo message is one line and the key check fails open on our outag
   assert.equal((await verifyKey('tcc_x', 'a/b', no)).valid, false);
   assert.equal((await verifyKey('', 'a/b', no)).valid, false);
 });
+
+import { compatible, planFixes, renderFixBody } from '../src/fix.js';
+
+test('fix mode: caret compatibility matches Cargo', () => {
+  assert.equal(compatible('1.6.0', '1.6.1'), true);
+  assert.equal(compatible('1.6.0', '2.0.0'), false);
+  assert.equal(compatible('0.3.20', '0.3.23'), true);
+  assert.equal(compatible('0.3.20', '0.4.0'), false);
+  assert.equal(compatible('0.0.3', '0.0.4'), false);
+});
+
+test('fix mode: plans in-requirement upgrades, routes breaking ones to a person', () => {
+  const row = (name, version) => ({ name, version });
+  const r = {
+    security: [
+      { row: row('smallvec', '1.6.0'), a: { rs: 'RUSTSEC-2021-0003', summary: 'overflow', upgrade: '1.6.1' } },
+      { row: row('old', '0.2.0'), a: { rs: 'RUSTSEC-X', upgrade: '0.3.0' } },
+      { row: row('nofix', '1.0.0'), a: { rs: 'RUSTSEC-Y', upgrade: null } },
+    ],
+    yanked: [row('y', '1.2.3'), row('smallvec', '1.6.0')],
+  };
+  const { plan, manual } = planFixes(r);
+  assert.deepEqual(plan.map(p => [p.name, p.to, p.precise]), [['smallvec', '1.6.1', true], ['y', null, false]]);
+  assert.deepEqual(manual.map(m => m.name), ['old', 'nofix']);
+  const body = renderFixBody({ applied: plan, manual, passed: false, testCommand: 'cargo test', testOut: 'boom', lockRel: 'Cargo.lock' });
+  assert.match(body, /draft/);
+  assert.match(body, /Needs a person/);
+});

@@ -29,7 +29,17 @@ inputs:
     description: 'Set to false to skip the PR comment and only write the job summary.'
     required: false
     default: 'true'
+  fix:
+    description: 'On scheduled or manual runs: upgrade crates with security advisories or yanked versions (inside your Cargo.toml requirements), run the tests and open one pull request. Needs permissions contents: write and pull-requests: write.'
+    required: false
+    default: 'false'
+  test-command:
+    description: 'Command fix mode runs to test the upgrades.'
+    required: false
+    default: 'cargo test'
 outputs:
+  fix-pr:
+    description: 'URL of the fix pull request, when fix mode opened or updated one.'
   advisories:
     description: 'Number of security advisories (not counting unmaintained or unsound notices).'
   yanked:

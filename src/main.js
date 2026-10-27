@@ -5,6 +5,7 @@ import path from 'node:path';
 import { parseLock, parseManifest } from './parse.js';
 import { runCheck, resolveManifest } from './check.js';
 import { renderReport, headline, MARKER, LOCKED_MESSAGE } from './render.js';
+import { runFix } from './fix.js';
 
 const VERIFY_URL = 'https://shop.tensorust.com/api/cargo-check/verify';
 const CARGO_FILE = /(^|\/)Cargo\.(toml|lock)$/;
@@ -78,6 +79,8 @@ export async function run() {
   const lockInput = core.getInput('lockfile').trim();
   const maxApiCalls = Math.max(0, parseInt(core.getInput('max-api-calls') || '60', 10) || 0);
   const wantComment = (core.getInput('comment') || 'true').toLowerCase() !== 'false';
+  const wantFix = (core.getInput('fix') || 'false').toLowerCase() === 'true';
+  const testCommand = core.getInput('test-command') || 'cargo test';
   const repo = process.env.GITHUB_REPOSITORY;
   const event = process.env.GITHUB_EVENT_PATH && existsSync(process.env.GITHUB_EVENT_PATH) ? JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8')) : {};
   const pr = event.pull_request;
@@ -100,7 +103,20 @@ export async function run() {
     const lockPath = path.join(ws, lockInput || 'Cargo.lock');
     if (!existsSync(lockPath)) { core.info(`No pull request and no ${lockInput || 'Cargo.lock'} in the workspace (run actions/checkout first). Nothing to check.`); return; }
     const r = await runCheck({ packages: parseLock(readFileSync(lockPath, 'utf8')), fetch, maxApiCalls });
-    const md = renderReport(r, { source: '`' + (lockInput || 'Cargo.lock') + '`', failOn });
+    let md = renderReport(r, { source: '`' + (lockInput || 'Cargo.lock') + '`', failOn });
+    if (wantFix) {
+      const base = (event.repository && event.repository.default_branch) || process.env.GITHUB_REF_NAME || 'main';
+      try {
+        const f = await runFix({ r, call, repo, ws, lockRel: lockInput || 'Cargo.lock', testCommand, base, core });
+        core.setOutput('fix-pr', f.pr || '');
+        if (f.pr) md += `
+**Fix pull request:** ${f.pr} (${f.passed ? 'tests pass' : 'tests fail, opened as a draft'})
+`;
+        else if (f.manual && f.manual.length) md += `
+**Fix mode:** nothing Cargo can upgrade inside your requirements; ${f.manual.length} need a Cargo.toml change.
+`;
+      } catch (e) { core.warning(`Fix mode failed: ${e.message}`); }
+    }
     await core.summary.addRaw(md).write();
     return finish(r, failOn);
   }

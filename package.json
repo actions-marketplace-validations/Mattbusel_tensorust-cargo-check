@@ -1,6 +1,6 @@
 {
   "name": "tensorust-cargo-check",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "GitHub Action: one pull request comment with security advisories, yanked and outdated crates, licenses, MSRV and new dependencies for every Cargo.lock change.",
   "type": "module",
   "main": "dist/index.js",
